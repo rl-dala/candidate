@@ -4,10 +4,10 @@
 Предсказание:
     python postprocess.py data/test_predictions.jsonl answers.jsonl
 Обучение (создает model.pkl, печатает компромисс охват/ошибки и прогноз):
-    python postprocess.py data/train_predictions.jsonl oof_answers.jsonl --train data/train_labels.jsonl
-    python evaluate.py oof_answers.jsonl data/train_labels.jsonl
+    python postprocess.py data/train_predictions.jsonl data/train_oof_answers.jsonl --train data/train_labels.jsonl --max-wrong 12 --repeats 3
+    python evaluate.py data/train_oof_answers.jsonl data/train_labels.jsonl
 
-Python 3.14s
+Python 3.14
 
 https://www.consultant.ru/document/cons_doc_LAW_373184/
 Структура MRZ для российских паспортов:
