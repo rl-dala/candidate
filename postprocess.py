@@ -31,7 +31,8 @@ https://www.consultant.ru/document/cons_doc_LAW_373184/
 # --- Константы ---
 FIELDS = ["Last_name_ru", "First_name_ru", "Middle_name_ru", "Sex_ru", "Birth_date",   "Birth_place_ru", "Issue_date", "Issue_organisation_code", "Licence_number",   "Issue_organization_ru"]
 NOW = date(2026, 10, 1) # 1 октября 2026
-subdivisions = pd.read_csv(r"reference\subdivisions.csv")
+subdivisions = pd.read_csv(r"reference\subdivisions.csv", dtype=str)
+subdivisions_dict = dict(zip(subdivisions["code"], subdivisions["name"]))
 TRANSLIT = {"А": "A", "Б": "B", "В": "V", "Г": "G", "Д": "D", "Е": "E",
             "Ё": "2", "Ж": "J", "З": "Z", "И": "I", "Й": "Q", "К": "K",
             "Л": "L", "М": "M", "Н": "N", "О": "O", "П": "P", "Р": "R",
@@ -42,7 +43,7 @@ SOURCES = ["web", "mobile", "mobile_v2"]
 
 # -----------------
 
-def parse_date(s):
+def parse_date(s: str) -> date | None:
     try:
         return date.strptime(s, "%d.%m.%Y")
     except (ValueError, TypeError):
@@ -53,15 +54,32 @@ def add_years(d: date, n: int) -> date:
         return d.replace(year=d.year + n)
     except ValueError: # 29 февраля
         return d.replace(year=d.year + n, day=28)
-    
-def translit(s):
+
+def yymmdd(s: date) -> str:
+    """Изменяет формат даты с ДД.ММ.ГГГГ в ГГММДД"""
+    return s.strftime("%y%m%d")
+
+def translit(s: str) -> str:
     """Кириллица -> написание в MRZ. Все, чего нет в таблице (пробел, дефис,
     знаки, цифры, латиница), превращается в '<'."""
     return "".join(TRANSLIT.get(c, "<") for c in s.upper())
 
-def yymmdd(s: date) -> str:
-    """Изменяет формат даты с ДД.ММ.ГГГГ в ГГММДД"""
-    return date.strptime(s, "%d.%m.%Y").strftime("%y%m%d")
+def parse_fio(mrz_top: str) -> list | None:
+    name_part = mrz_top[5:].split("<<", 1)
+    
+    if len(name_part) != 2:
+        return None
+
+    surname = name_part[0].replace("<", "-").strip("-")
+    given_names = [part for part in name_part[1].strip("<").split("<") if part]
+
+    if not surname or given_names:
+        return None
+    
+    name = given_names[0]
+    patronymic = given_names[1] if len(given_names) > 1 else ""
+
+    return [surname, name, patronymic]
 
 def passport_status(birth: date, issue: date) -> str:
     if issue > NOW:
@@ -91,24 +109,20 @@ def mrz_check_digit(value: str) -> int:
 
     return total % 10
 
-def viz_text(doc, field: str) -> str | None:
-    if hasattr(doc, '_asdict'):
-        doc = doc._asdict()
-    
+def viz_text(doc: dict, field: str) -> str | None:
     value = (doc.get('viz') or {}).get(field)
     
     if not value or not value.get('lines'):
         return None
     
     text = " ".join(line['text'] 
-                    for line in value.get('lines', [])
-                    if line.get('text'))
+                    for line in value['lines'])
     return text
 
-def parse_mrz(doc) -> list | None:
-    if hasattr(doc, '_asdict'):
-        doc = doc._asdict()
-    
+def check_digit_check(value: str, digit: str) -> bool:
+    return digit.isdigit() and mrz_check_digit(value) == int(digit)
+
+def parse_mrz(doc: dict) -> list | None:
     if doc['mrz'] is None:
         return None
     
@@ -124,16 +138,16 @@ def parse_mrz(doc) -> list | None:
         return None
     
     try:
-        checks = {mrz_check_digit(mrz_bot[:9]) == int(mrz_bot[9]),
-                  mrz_check_digit(mrz_bot[13:19]) == int(mrz_bot[19]),
-                  mrz_bot[27] == "<",
-                  mrz_check_digit(mrz_bot[28:42]) == int(mrz_bot[42]),
-                  mrz_check_digit(mrz_bot[0:10] + mrz_bot[13:20] + mrz_bot[21:43]) == int(mrz_bot[43])}
+        checks = {"ser_nom": check_digit_check(mrz_bot[:9], mrz_bot[9]),
+                  "birth": check_digit_check(mrz_bot[13:19], mrz_bot[19]),
+                  "dopoln": check_digit_check(mrz_bot[28:42], mrz_bot[42]),
+                  "final": check_digit_check(mrz_bot[0:10] + mrz_bot[13:20] + mrz_bot[21:43], mrz_bot[43]),}
         if not any(checks):
             return None
 
-        FIO = [part for part in mrz_top[5:].split("<") if part.strip()]
-        FIO.append("") if len(FIO) < 3 else FIO
+        FIO = parse_fio(mrz_top)
+        if not FIO:
+            return None
         DOC_SER = mrz_bot[:3]+mrz_bot[28].strip('<')
         DOC_NUM = mrz_bot[3:9]
         NATION = mrz_bot[10:13]
@@ -147,13 +161,19 @@ def parse_mrz(doc) -> list | None:
         ]
     except (ValueError, TypeError):
         return None
-
-def candidates(doc, field):
-    c = []
     
+# Ввод-вывод
+def read_jsonl(path):
+    return pd.read_json(path, lines=True)
+
+def write_jsonl(data: pd.DataFrame):
+    data.to_json("answers.jsonl", lines=True)
+    return 
+
 
 
 data = pd.read_json(r"data\train_predictions.jsonl", lines=True)
 for doc in data.itertuples(index=False):
+    doc = doc._asdict()
     print(parse_mrz(doc))
 
